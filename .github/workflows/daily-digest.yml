@@ -1,0 +1,47 @@
+name: Daily Analysis Digest
+
+on:
+  schedule:
+    - cron: '30 9 * * 1-5'   # 15:00 IST, Mon-Fri (NSE market close is 15:30 IST)
+  workflow_dispatch: {}
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis pipeline
+        env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CONFIDENCE_THRESHOLD: ${{ vars.CONFIDENCE_THRESHOLD }}
+          SHORTLIST_PER_BUCKET: ${{ vars.SHORTLIST_PER_BUCKET }}
+        run: python run_daily.py --output daily_digest.xlsx
+
+      - name: Email results
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python send_email.py --file daily_digest.xlsx
+
+      - name: Upload digest as build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-digest
+          path: daily_digest.xlsx
+          retention-days: 30
