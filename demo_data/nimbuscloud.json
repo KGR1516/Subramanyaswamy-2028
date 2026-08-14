@@ -1,0 +1,55 @@
+{
+    "symbol": "NIMBUSCLOUD",
+    "name": "Nimbus Cloud Systems",
+    "cap_segment": "small",
+    "sector": "Technology",
+    "price": {
+          "live": 684.0,
+          "day_open": 655.0,
+          "day_high": 691.0,
+          "day_low": 653.0,
+          "prev_close": 652.0,
+          "day_change_pct": 4.91,
+          "volume": 2380000
+    },
+    "range_52w": {
+          "high": 705.0,
+          "low": 318.0,
+          "pct_from_high": -2.98,
+          "position_pct": 94.6
+    },
+    "technicals": {
+          "rvol": 4.1,
+          "price_vs_sma_pct": 9.4,
+          "window_return_pct": 21.0,
+          "swing_high": 690.9,
+          "swing_low": 333.9,
+          "day_range_position_pct": 82.0,
+          "trend": "up"
+    },
+    "analyst": {
+          "consensus": "strong_buy",
+          "num_analysts": 14,
+          "buy_pct": 90,
+          "hold_pct": 8,
+          "sell_pct": 2,
+          "target_mean": 792.0,
+          "target_low": 700.0,
+          "target_high": 910.0,
+          "upside_pct": 15.79
+    },
+    "news": {
+          "total": 4,
+          "positive": 3,
+          "negative": 0,
+          "neutral": 1,
+          "recent": [
+                  {
+                            "title": "Nimbus Cloud beats estimates, margin surprise",
+                            "tone": "positive"
+                  }
+          ]
+    },
+    "data_gaps": [],
+    "note": "Demo bundle. Feed has no raw ratios (P/E, ROE); those are intentionally absent."
+}
