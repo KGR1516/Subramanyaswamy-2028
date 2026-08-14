@@ -1,0 +1,59 @@
+{
+    "symbol": "TITANFORGE",
+    "name": "Titan Forge Ltd",
+    "cap_segment": "mid",
+    "sector": "Industrials",
+    "price": {
+          "live": 1842.0,
+          "day_open": 1795.0,
+          "day_high": 1858.0,
+          "day_low": 1790.0,
+          "prev_close": 1788.0,
+          "day_change_pct": 3.02,
+          "volume": 4120000
+    },
+    "range_52w": {
+          "high": 1875.0,
+          "low": 980.0,
+          "pct_from_high": -1.76,
+          "position_pct": 96.3
+    },
+    "technicals": {
+          "rvol": 3.4,
+          "price_vs_sma_pct": 6.8,
+          "window_return_pct": 14.2,
+          "swing_high": 1837.5,
+          "swing_low": 1029.0,
+          "day_range_position_pct": 88.0,
+          "trend": "up"
+    },
+    "analyst": {
+          "consensus": "buy",
+          "num_analysts": 22,
+          "buy_pct": 86,
+          "hold_pct": 12,
+          "sell_pct": 2,
+          "target_mean": 2110.0,
+          "target_low": 1900.0,
+          "target_high": 2400.0,
+          "upside_pct": 14.55
+    },
+    "news": {
+          "total": 6,
+          "positive": 4,
+          "negative": 0,
+          "neutral": 2,
+          "recent": [
+                  {
+                            "title": "Titan Forge wins record defence order, guides higher",
+                            "tone": "positive"
+                  },
+                  {
+                            "title": "Brokerages raise target after strong Q order book",
+                            "tone": "positive"
+                  }
+          ]
+    },
+    "data_gaps": [],
+    "note": "Demo bundle. Feed has no raw ratios (P/E, ROE); those are intentionally absent."
+}
