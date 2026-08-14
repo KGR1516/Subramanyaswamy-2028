@@ -1,4 +1,0 @@
-.env
-audit.db
-__pycache__/
-*.pyc
