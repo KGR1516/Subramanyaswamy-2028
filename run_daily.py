@@ -97,12 +97,21 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
     }
 
 
+def _env_int(name, default):
+    """os.environ.get(name, default) doesn't fall back on an empty string —
+    and GitHub Actions sets an unset repo *variable* to "" rather than
+    leaving it absent — so int(os.environ.get(...)) would crash on a repo
+    that never configured this optional variable. Treat blank as unset."""
+    val = (os.environ.get(name) or "").strip()
+    return int(val) if val else default
+
+
 def main():
     parser = argparse.ArgumentParser(description="Headless daily analysis run")
     parser.add_argument("--shortlist-per-bucket", type=int,
-                         default=int(os.environ.get("SHORTLIST_PER_BUCKET", "4")))
+                         default=_env_int("SHORTLIST_PER_BUCKET", 4))
     parser.add_argument("--min-confidence", type=int,
-                         default=int(os.environ.get("CONFIDENCE_THRESHOLD", "7")))
+                         default=_env_int("CONFIDENCE_THRESHOLD", 7))
     parser.add_argument("--mode", choices=["live", "demo"], default="live",
                          help="demo is for local testing only — the workflow always uses live")
     parser.add_argument("--output", default="daily_digest.xlsx")
