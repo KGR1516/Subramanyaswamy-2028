@@ -71,12 +71,13 @@ dropped. Tune how long a call must season before it's checked with
 
 ## Automated daily digest (GitHub Actions)
 
-Like the companion `srikanth-stock` screener, this repo can run itself on a
-schedule — no laptop required. `.github/workflows/daily-digest.yml` runs the
-**same Live-mode pipeline** as the dashboard (real yfinance data, not a
-scrape — GitHub's runners have normal internet access) every weekday at
-**15:00 IST**, builds a formula-driven Excel digest with `build_report.py`,
-and emails it via Gmail with `send_email.py`.
+This repo can run itself on a schedule — no laptop required, no Telegram.
+`.github/workflows/daily-digest.yml` runs the **same Live-mode pipeline** as
+the dashboard (real yfinance data, not a scrape — GitHub's runners have
+normal internet access) every weekday at **exactly 3:00 PM IST**, builds a
+formula-driven Excel digest with `build_report.py`, and emails **only that
+Excel file** to your Gmail with `send_email.py`. Nothing is posted anywhere
+else — this workflow doesn't touch Telegram at all.
 
 **Setup — add these in the repo's *Settings → Secrets and variables →
 Actions*:**
@@ -87,7 +88,6 @@ Actions*:**
 | `GMAIL_APP_PASSWORD` | **Yes** | a Gmail **App Password** (not your normal password) — generate one at myaccount.google.com/apppasswords |
 | `RECIPIENT_EMAIL` | No | who receives the email (defaults to `GMAIL_ADDRESS`) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | No | enables real LLM debate instead of the deterministic engine (the `claude` CLI isn't available on a runner, so `claude_code` never applies here) |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | No | also posts fired BUY signals to Telegram, same as the local app |
 
 Optional repo *Variables* (not secrets): `LLM_PROVIDER`, `CONFIDENCE_THRESHOLD`,
 `SHORTLIST_PER_BUCKET` — same meaning as the `.env` keys below.
@@ -123,7 +123,7 @@ artifact for 30 days, so you can pull the raw file even without email.
 | `dashboard.html` | self-contained UI (inline CSS/JS, no build step) |
 | `universe.json` | editable NSE tickers per cap bucket |
 | `demo_data/*.json` | offline evidence bundles |
-| `run_daily.py` | headless entry point for the scheduled workflow — runs one Live cycle, no Flask |
+| `run_daily.py` | headless entry point for the scheduled workflow — runs one Live cycle, no Flask, no Telegram |
 | `build_report.py` | builds the formula-driven Excel digest from a run's verdicts |
 | `send_email.py` | emails the digest via Gmail SMTP (App Password) |
 | `.github/workflows/daily-digest.yml` | GitHub Actions schedule: weekdays, 15:00 IST |
