@@ -1,0 +1,63 @@
+{
+    "symbol": "DELTAMOTORS",
+    "name": "Delta Motors",
+    "cap_segment": "large",
+    "sector": "Auto",
+    "price": {
+          "live": 612.0,
+          "day_open": 630.0,
+          "day_high": 633.0,
+          "day_low": 608.0,
+          "prev_close": 631.0,
+          "day_change_pct": -3.01,
+          "volume": 5400000
+    },
+    "range_52w": {
+          "high": 1040.0,
+          "low": 585.0,
+          "pct_from_high": -41.15,
+          "position_pct": 5.9
+    },
+    "technicals": {
+          "rvol": 1.7,
+          "price_vs_sma_pct": -8.2,
+          "window_return_pct": -11.4,
+          "swing_high": 1019.2,
+          "swing_low": 614.25,
+          "day_range_position_pct": 22.0,
+          "trend": "down"
+    },
+    "analyst": {
+          "consensus": "hold",
+          "num_analysts": 27,
+          "buy_pct": 34,
+          "hold_pct": 44,
+          "sell_pct": 22,
+          "target_mean": 640.0,
+          "target_low": 540.0,
+          "target_high": 760.0,
+          "upside_pct": 4.58
+    },
+    "news": {
+          "total": 4,
+          "positive": 0,
+          "negative": 3,
+          "neutral": 1,
+          "recent": [
+                  {
+                            "title": "Delta Motors recalls units after safety probe",
+                            "tone": "negative"
+                  },
+                  {
+                            "title": "Q volumes slump; margin pressure persists",
+                            "tone": "negative"
+                  },
+                  {
+                            "title": "Brokerage downgrades Delta on demand worry",
+                            "tone": "negative"
+                  }
+          ]
+    },
+    "data_gaps": [],
+    "note": "Demo bundle. Feed has no raw ratios (P/E, ROE); those are intentionally absent."
+}
