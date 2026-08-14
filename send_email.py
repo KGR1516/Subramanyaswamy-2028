@@ -52,7 +52,7 @@ def main():
 
     sender = os.environ["GMAIL_ADDRESS"]
     password = os.environ["GMAIL_APP_PASSWORD"]
-    recipient = os.environ.get("RECIPIENT_EMAIL", sender)
+        recipient = (os.environ.get("RECIPIENT_EMAIL") or "").strip() or sender  # blank secret (unset) must fall back to sender, not stay ""
 
     msg = build_message(sender, recipient, Path(args.file), args.buy_count)
 
