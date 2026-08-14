@@ -2,7 +2,7 @@ name: Daily Analysis Digest
 
 on:
   schedule:
-    - cron: '30 9 * * 1-5'   # 15:00 IST, Mon-Fri (NSE market close is 15:30 IST)
+    - cron: '30 9 * * 1-5'   # 15:00 IST (3:00 PM), Mon-Fri
   workflow_dispatch: {}
 
 jobs:
@@ -25,8 +25,6 @@ jobs:
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CONFIDENCE_THRESHOLD: ${{ vars.CONFIDENCE_THRESHOLD }}
           SHORTLIST_PER_BUCKET: ${{ vars.SHORTLIST_PER_BUCKET }}
         run: python run_daily.py --output daily_digest.xlsx
