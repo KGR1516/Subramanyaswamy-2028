@@ -6,8 +6,7 @@ Headless entry point for the "Daily Analysis Digest" GitHub Actions workflow.
 Runs ONE live analysis cycle — the same Scout -> Technician -> Fundamentalist
 -> Newsdesk -> Bull/Bear -> Judge pipeline the dashboard's Live mode uses —
 without Flask, threading, or a browser, then hands the verdicts to
-build_report.py to make an Excel digest and (optionally) posts fired BUY
-signals to Telegram, exactly like app.py's Messenger agent does.
+build_report.py to make an Excel digest. Excel only — no Telegram.
 
 This is meant to run on GitHub Actions, which has normal outbound internet
 access, so yfinance and the LLM providers work here even in environments
@@ -98,41 +97,6 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
     }
 
 
-def _tg_send(token, chat_id, text):
-    import requests
-    r = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML",
-              "disable_web_page_preview": True},
-        timeout=20,
-    )
-    return r.ok and r.json().get("ok", False)
-
-
-def maybe_send_telegram(result):
-    """Optional — reuses app.py's Telegram behavior if TELEGRAM_BOT_TOKEN /
-    TELEGRAM_CHAT_ID secrets are set on the repo. Skipped silently otherwise,
-    same as the local app."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        print("[run_daily] Telegram not configured — skipping")
-        return
-    for v in result["fired"]:
-        text = (
-            f"\U0001F7E2 <b>BUY SIGNAL — {v['symbol']}</b> ({v['cap']} cap)\n\n"
-            f"Verdict: BUY | Confidence: {v['confidence']}/10\n"
-            f"Winner: {v['winner']}\nWhy: {v['rationale']}\n"
-            f"Key catalyst: {v['key_catalyst']}\n"
-            f"Live price: ₹{v['price']} | Day change: {v['day_change_pct']}%\n\n"
-            f"— Analysis only. No trade was placed. Not investment advice."
-        )
-        try:
-            _tg_send(token, chat_id, text)
-        except Exception as e:
-            print(f"[run_daily] Telegram send failed for {v['symbol']}: {e}")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Headless daily analysis run")
     parser.add_argument("--shortlist-per-bucket", type=int,
@@ -146,7 +110,6 @@ def main():
 
     load_env()
     result = run_cycle(args.shortlist_per_bucket, args.min_confidence, mode=args.mode)
-    maybe_send_telegram(result)
 
     import build_report
     build_report.build(result, args.output)
