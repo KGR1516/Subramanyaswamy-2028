@@ -12,9 +12,11 @@ Keep it identical if you swap in a richer feed.
 Live mode does a cheap first pass (1-month history) over the whole universe
 to screen/shortlist by day-change, then a second, deeper pass — only for the
 shortlisted names — that pulls ~1 year of price history (for RSI/MACD/
-Bollinger/SMA50-200/ATR/OBV/ADX) plus annual financial statements (for a
-multi-year revenue/earnings trend). This keeps the wide screen fast while
-still getting real technical + fundamental depth on the names that matter.
+Bollinger/SMA50-200/ATR/OBV/ADX/volume breakout) plus annual financial
+statements — income statement, balance sheet, cash flow — (for a multi-year
+revenue/earnings trend, EBIT/EBITDA, operating & net cash flow, and the cash
+conversion cycle). This keeps the wide screen fast while still getting real
+technical + fundamental depth on the names that matter.
 """
 
 import os
@@ -30,6 +32,8 @@ UNIVERSE_PATH = os.path.join(HERE, "universe.json")
 SMA_WINDOW = 20      # trading days for the SMA / window-return calculations
 DEEP_HISTORY_PERIOD = "1y"   # history window for RSI/MACD/Bollinger/SMA50-200/ATR/OBV/ADX
 FUNDAMENTALS_YEARS_TARGET = 5  # best-effort: Yahoo's free feed usually caps annual statements at ~4y
+VOLUME_BREAKOUT_LOOKBACK = 20     # trading days used for the "fresh N-day high" check
+VOLUME_BREAKOUT_VOL_MULTIPLIER = 1.5  # today's volume must be >= this x the prior average
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +270,33 @@ def _adx(highs, lows, closes, period=14):
     return None if pd.isna(val) else round(float(val), 1)
 
 
+def _volume_breakout(closes, vols, lookback=VOLUME_BREAKOUT_LOOKBACK,
+                      vol_multiplier=VOLUME_BREAKOUT_VOL_MULTIPLIER):
+    """True only when TWO conditions both hold: today's close is a fresh
+    `lookback`-day high, AND today's volume is at least `vol_multiplier`x the
+    average volume over the prior `lookback` days. A price move without
+    volume confirmation is False, not a breakout; either signal missing
+    entirely (not enough history) is None."""
+    if closes is None or vols is None:
+        return None
+    closes, vols = list(closes), list(vols)
+    if len(closes) < lookback + 1 or len(vols) < lookback + 1:
+        return None
+    today_close, today_vol = closes[-1], vols[-1]
+    if today_close is None or today_vol is None or today_close != today_close or today_vol != today_vol:
+        return None
+    prior_closes = [c for c in closes[-(lookback + 1):-1] if c is not None and c == c]
+    prior_vols = [v for v in vols[-(lookback + 1):-1] if v is not None and v == v]
+    if not prior_closes or not prior_vols:
+        return None
+    if today_close <= max(prior_closes):
+        return False
+    avg_prior_vol = sum(prior_vols) / len(prior_vols)
+    if not avg_prior_vol:
+        return None
+    return today_vol >= vol_multiplier * avg_prior_vol
+
+
 def _compute_technicals(hist_long):
     """All technical indicators from a >=1y OHLCV DataFrame. Returns a dict;
     any indicator without enough history is left as None (never guessed)."""
@@ -285,8 +316,10 @@ def _compute_technicals(hist_long):
     sma50 = _sma_at(closes, 50)
     sma200 = _sma_at(closes, 200)
     atr14 = _atr(highs, lows, closes)
-    obv_trend = _obv_trend(closes, vols.reindex(closes.index))
+    vols_aligned = vols.reindex(closes.index)
+    obv_trend = _obv_trend(closes, vols_aligned)
     adx14 = _adx(highs, lows, closes)
+    volume_breakout = _volume_breakout(list(closes), list(vols_aligned))
 
     sma_cross = None
     if sma50 is not None and sma200 is not None:
@@ -304,6 +337,7 @@ def _compute_technicals(hist_long):
         "sma50": sma50,
         "sma200": sma200,
         "sma_cross": sma_cross,          # "golden" | "death" | "flat" | None
+        "volume_breakout": volume_breakout,  # True | False | None — fresh N-day high AND volume >= 1.5x avg
         "atr14": atr14,
         "obv_trend": obv_trend,          # "rising" | "falling" | "flat" | None
         "adx14": adx14,
@@ -312,8 +346,11 @@ def _compute_technicals(hist_long):
 
 # ---------------------------------------------------------------------------
 # fundamentals — snapshot ratios (from yfinance .info, no extra API call)
+# plus a handful of figures that need the raw statements (EBIT/EBITDA,
+# operating & net cash flow, cash conversion cycle) — only present for
+# shortlisted stocks that got a deep fetch of balance_sheet/cashflow.
 # ---------------------------------------------------------------------------
-def _compute_fundamentals(info, live_price):
+def _compute_fundamentals(info, live_price, financials=None, balance_sheet=None, cashflow=None):
     market_cap = _safe(info, "marketCap")
     fcf = _safe(info, "freeCashflow")
     fcf_yield = None
@@ -322,6 +359,41 @@ def _compute_fundamentals(info, live_price):
             fcf_yield = round(float(fcf) / float(market_cap) * 100.0, 2)
         except Exception:
             fcf_yield = None
+
+    # operating cash flow: cheap from .info first, else the cash-flow
+    # statement's own row (naming varies across yfinance versions).
+    ocf = _safe(info, "operatingCashflow")
+    if ocf is None:
+        ocf = _latest_value(cashflow, [
+            "Operating Cash Flow", "Total Cash From Operating Activities",
+            "Cash Flow From Continuing Operating Activities",
+        ])
+
+    # net cash flow: total change in cash for the period. Prefer the
+    # statement's own "changes in cash" row; otherwise sum operating +
+    # investing + financing cash flow, but only if ALL THREE are present —
+    # a partial sum isn't a real net change, so don't guess with two of three.
+    net_cash_flow = _latest_value(cashflow, [
+        "Changes In Cash", "Net Change In Cash", "Changes In Cash And Cash Equivalents",
+    ])
+    if net_cash_flow is None:
+        icf = _latest_value(cashflow, ["Investing Cash Flow", "Total Cashflows From Investing Activities"])
+        fin_cf = _latest_value(cashflow, ["Financing Cash Flow", "Total Cash From Financing Activities"])
+        if ocf is not None and icf is not None and fin_cf is not None:
+            net_cash_flow = ocf + icf + fin_cf
+
+    # EBIT / EBITDA: EBITDA is cheap from .info; EBIT comes off the income
+    # statement. Where only one is available, derive the other via
+    # Depreciation & Amortization off the cash-flow statement.
+    ebitda = _safe(info, "ebitda")
+    ebit = _latest_value(financials, ["EBIT", "Operating Income", "OperatingIncome"])
+    d_and_a = _latest_value(cashflow, ["Depreciation And Amortization", "Depreciation"])
+    if ebitda is None and ebit is not None and d_and_a is not None:
+        ebitda = ebit + d_and_a
+    if ebit is None and ebitda is not None and d_and_a is not None:
+        ebit = ebitda - d_and_a
+
+    ccc = _cash_conversion_cycle(balance_sheet, financials)
 
     return {
         "pe_trailing": _round(_safe(info, "trailingPE"), 2),
@@ -339,6 +411,11 @@ def _compute_fundamentals(info, live_price):
         "current_ratio": _round(_safe(info, "currentRatio"), 2),
         "free_cash_flow": _round(fcf, 0),
         "fcf_yield_pct": fcf_yield,
+        "operating_cash_flow": _round(ocf, 0),
+        "net_cash_flow": _round(net_cash_flow, 0),
+        "ebit": _round(ebit, 0),
+        "ebitda": _round(ebitda, 0),
+        "cash_conversion_cycle_days": ccc,
         "dividend_yield_pct": _pct100(_safe(info, "dividendYield")),
         "market_cap": _round(market_cap, 0),
     }
@@ -372,6 +449,56 @@ def _extract_yearly_row(df, row_names):
                     continue
             return out
     return {}
+
+
+def _latest_value(df, row_names):
+    """Most recent period's value for a row (matched by any of several
+    possible label spellings) from a statement DataFrame whose columns are
+    period-end dates. Unlike `_extract_yearly_row`, this returns a single
+    number (the latest column), not a multi-year series. None if the frame
+    or row isn't present."""
+    if df is None or df.empty:
+        return None
+    for name in row_names:
+        if name in df.index:
+            row = df.loc[name].dropna()
+            if row.empty:
+                continue
+            try:
+                col = max(row.index)
+            except Exception:
+                col = row.index[0]
+            try:
+                return float(row[col])
+            except Exception:
+                continue
+    return None
+
+
+def _cash_conversion_cycle(balance_sheet, financials):
+    """Cash Conversion Cycle (days) = Days Inventory Outstanding + Days
+    Sales Outstanding - Days Payables Outstanding, using the latest period's
+    balance-sheet and income-statement figures. This is a single-period
+    snapshot (not averaged across two periods' balances) — kept simple and
+    transparent rather than silently guessing at a prior-period balance.
+    None if any required figure is missing."""
+    revenue = _latest_value(financials, ["Total Revenue", "TotalRevenue"])
+    cogs = _latest_value(financials, ["Cost Of Revenue", "CostOfRevenue", "Reconciled Cost Of Revenue"])
+    inventory = _latest_value(balance_sheet, ["Inventory"])
+    receivables = _latest_value(balance_sheet, ["Accounts Receivable", "Receivables", "Net Receivables"])
+    payables = _latest_value(balance_sheet, [
+        "Accounts Payable", "Payables", "Accounts Payable And Accrued Liabilities",
+    ])
+
+    if None in (revenue, cogs, inventory, receivables, payables) or not revenue or not cogs:
+        return None
+    try:
+        dio = 365.0 * inventory / abs(cogs)
+        dso = 365.0 * receivables / revenue
+        dpo = 365.0 * payables / abs(cogs)
+        return round(dio + dso - dpo, 1)
+    except Exception:
+        return None
 
 
 def _cagr(values_oldest_to_newest):
@@ -436,14 +563,15 @@ def _safe_statement(ticker, attr_names):
 
 
 def _build_live_bundle(symbol, cap_segment, hist, info, raw_news,
-                        hist_long=None, financials=None):
+                        hist_long=None, financials=None, balance_sheet=None, cashflow=None):
     """Turn raw yfinance data into ONE normalized evidence bundle.
 
     `hist` is the cheap 1-month history used for the price block (unchanged
-    behaviour). `hist_long` (~1y) and `financials` (annual income statement)
-    are only fetched for shortlisted stocks and add the technicals /
-    fundamentals_5y blocks; both are optional so this still works if a deep
-    fetch fails for one ticker.
+    behaviour). `hist_long` (~1y), `financials` (annual income statement),
+    `balance_sheet` and `cashflow` are only fetched for shortlisted stocks
+    and add the technicals / fundamentals_5y blocks plus the EBIT/EBITDA,
+    cash-flow, and cash-conversion-cycle fundamentals; all are optional so
+    this still works if a deep fetch fails for one ticker.
     """
     gaps = []
 
@@ -567,8 +695,9 @@ def _build_live_bundle(symbol, cap_segment, hist, info, raw_news,
         if v is None:
             gaps.append(f"analyst.{k}")
 
-    # --- fundamentals (valuation / profitability / leverage snapshot) ------
-    fundamentals = _compute_fundamentals(info, live)
+    # --- fundamentals (valuation / profitability / leverage / cash-flow) ---
+    fundamentals = _compute_fundamentals(info, live, financials=financials,
+                                          balance_sheet=balance_sheet, cashflow=cashflow)
     for k, v in fundamentals.items():
         if v is None:
             gaps.append(f"fundamentals.{k}")
@@ -641,7 +770,7 @@ def fetch_live_bundles(shortlist_per_bucket=4, progress=None):
 
         scored.sort(key=lambda r: r[0], reverse=True)
         for _, tk, t, hist, info in scored[:shortlist_per_bucket]:
-            hist_long, financials, news = None, None, []
+            hist_long, financials, balance_sheet, cashflow, news = None, None, None, None, []
             try:
                 hist_long = t.history(period=DEEP_HISTORY_PERIOD, interval="1d")
             except Exception as e:
@@ -651,12 +780,21 @@ def fetch_live_bundles(shortlist_per_bucket=4, progress=None):
             except Exception as e:
                 print(f"[data] {tk} financials fetch failed: {e}")
             try:
+                balance_sheet = _safe_statement(t, ["balance_sheet", "balancesheet"])
+            except Exception as e:
+                print(f"[data] {tk} balance sheet fetch failed: {e}")
+            try:
+                cashflow = _safe_statement(t, ["cashflow", "cash_flow"])
+            except Exception as e:
+                print(f"[data] {tk} cashflow fetch failed: {e}")
+            try:
                 news = getattr(t, "news", []) or []
             except Exception as e:
                 print(f"[data] {tk} news fetch failed: {e}")
 
             bundles.append(_build_live_bundle(tk, segment, hist, info, news,
-                                               hist_long=hist_long, financials=financials))
+                                               hist_long=hist_long, financials=financials,
+                                               balance_sheet=balance_sheet, cashflow=cashflow))
             shortlisted += 1
             if progress:
                 progress(scanned, shortlisted)
