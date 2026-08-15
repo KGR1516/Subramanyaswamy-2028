@@ -10,6 +10,18 @@ links to another sheet. "Fired" is a real formula (Verdict + Confidence vs.
 the threshold cell), not a hardcoded flag, so it recalculates if you change
 the threshold on the Summary tab.
 
+Sheet 2 ("All Verdicts") carries both the original verdict columns and the
+new technical-analysis columns (RSI-14, MACD signal, SMA50/200 cross,
+ADX-14) and fundamental-analysis columns (P/E, ROE, revenue growth,
+debt/equity, 5-year revenue & net-income CAGR) — see data_sources.py /
+scoring.py for what feeds them.
+
+Sheet 3 ("5Y Fundamentals") is the multi-year detail behind those CAGR
+columns: revenue and net income for every year actually available (Yahoo's
+free feed usually caps annual statements below 5 — that shortfall is
+labeled, never padded) per shortlisted stock, with CAGR computed as real
+Excel formulas from the displayed year cells (not baked-in Python floats).
+
 Can be run standalone against a saved result for testing:
     python build_report.py path/to/result.json out.xlsx
 """
@@ -29,17 +41,47 @@ SUB_FONT = Font(name=FONT, size=10, italic=True, color="6B675F")
 INPUT_FONT = Font(name=FONT, size=10, color="0000FF")     # blue = pipeline output (input to this sheet)
 FORMULA_FONT = Font(name=FONT, size=10, color="000000")   # black = in-sheet formula
 LINK_FONT = Font(name=FONT, size=10, color="008000")      # green = cross-sheet link
+NA_FONT = Font(name=FONT, size=10, color="9A958A")        # gray = no data available
 THIN = Side(style="thin", color="D8D3C7")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-VERDICT_HEADERS = ["Symbol", "Name", "Cap Segment", "Verdict", "Confidence",
-                    "Winner", "Price (₹)", "Day Change %", "Key Catalyst",
-                    "Rationale", "Engine", "Fired"]
+VERDICT_HEADERS = [
+    "Symbol", "Name", "Cap Segment", "Verdict", "Confidence",
+    "Winner", "Price (₹)", "Day Change %", "Key Catalyst",
+    "Rationale", "Engine", "Fired",
+    # --- technical analysis -------------------------------------------------
+    "RSI (14)", "MACD Signal", "SMA50/200 Cross", "ADX (14)",
+    # --- fundamental analysis ------------------------------------------------
+    "P/E (Trailing)", "ROE %", "Revenue Gr. YoY %", "Debt/Equity",
+    "Revenue CAGR (5Y) %", "Net Income CAGR (5Y) %", "Fund. Years",
+]
+
+FUND5Y_HEADERS = [
+    "Symbol", "Name", "Fiscal Years",
+    "Revenue Y-4", "Revenue Y-3", "Revenue Y-2", "Revenue Y-1", "Revenue (Latest)",
+    "Net Income Y-4", "Net Income Y-3", "Net Income Y-2", "Net Income Y-1", "Net Income (Latest)",
+    "Revenue CAGR %", "Net Income CAGR %", "Net Margin % (Latest Yr)", "Years Available (of 5)",
+]
+
+
+def _blank_or(v, font_if_value):
+    """Return (value, font) — blank cell with a gray N/A note if v is None."""
+    if v is None:
+        return "—", NA_FONT
+    return v, font_if_value
 
 
 def build(result, output_path="daily_digest.xlsx"):
     verdicts = result["verdicts"]
+    fundamentals_5y = result.get("fundamentals_5y", [])
     last_row = len(verdicts) + 1  # header is row 1
+
+    # the "BUY confidence" helper column lives one past the last visible
+    # header — computed once, up front, so the Summary tab's cross-sheet
+    # formulas and the All Verdicts sheet that actually writes it agree on
+    # its position (it moves whenever VERDICT_HEADERS grows).
+    helper_col = len(VERDICT_HEADERS) + 1
+    helper_letter = get_column_letter(helper_col)
 
     wb = Workbook()
 
@@ -60,11 +102,13 @@ def build(result, output_path="daily_digest.xlsx"):
     ws["A3"] = ("Live NSE data pulled via yfinance and run through the same Scout -> Technician -> "
                 "Fundamentalist -> Newsdesk -> Bull/Bear -> Judge pipeline as the local dashboard's "
                 "Live mode — run here on GitHub Actions, which (unlike a locked-down sandbox) has "
-                "normal internet access.")
+                "normal internet access. Technicals now include RSI/MACD/Bollinger/SMA50-200/ADX; "
+                "fundamentals include P/E, ROE, margins, leverage, and a multi-year revenue/earnings "
+                "trend (see the 'All Verdicts' and '5Y Fundamentals' tabs).")
     ws["A3"].font = Font(name=FONT, size=9, italic=True, color="6B675F")
     ws["A3"].alignment = Alignment(wrap_text=True, vertical="top")
     ws.merge_cells("A3:D3")
-    ws.row_dimensions[3].height = 44
+    ws.row_dimensions[3].height = 56
 
     ws["A5"] = "Confidence threshold (BUY fires at ≥)"
     ws["A5"].font = Font(name=FONT, size=10, bold=True)
@@ -78,9 +122,16 @@ def build(result, output_path="daily_digest.xlsx"):
         ("Shortlisted / in debate", result["in_debate"]),
         ("BUY signals fired", f"=COUNTIF('All Verdicts'!L2:L{last_row},\"YES\")"),
         ("Avg confidence (all)", f"=IFERROR(ROUND(AVERAGE('All Verdicts'!E2:E{last_row}),2),\"—\")"),
-        ("Top BUY confidence", f"=IFERROR(MAX('All Verdicts'!M2:M{last_row}),\"—\")"),
+        ("Top BUY confidence", f"=IFERROR(MAX('All Verdicts'!{helper_letter}2:{helper_letter}{last_row}),\"—\")"),
         ("Top pick", f"=IFERROR(INDEX('All Verdicts'!A2:A{last_row},"
-                      f"MATCH(MAX('All Verdicts'!M2:M{last_row}),'All Verdicts'!M2:M{last_row},0)),\"—\")"),
+                      f"MATCH(MAX('All Verdicts'!{helper_letter}2:{helper_letter}{last_row}),"
+                      f"'All Verdicts'!{helper_letter}2:{helper_letter}{last_row},0)),\"—\")"),
+        # P/E averaged only over positive values — a negative P/E (an
+        # unprofitable company) isn't a valuation multiple you can blend
+        # into an average with profitable ones without distorting it.
+        ("Avg P/E (where available, profitable only)",
+         f"=IFERROR(ROUND(AVERAGEIF('All Verdicts'!Q2:Q{last_row},\">0\"),1),\"—\")"),
+        ("Avg ROE % (where available)", f"=IFERROR(ROUND(AVERAGEIF('All Verdicts'!R2:R{last_row},\"<>—\"),1),\"—\")"),
     ]
     row = 7
     for label, val in rows:
@@ -89,22 +140,26 @@ def build(result, output_path="daily_digest.xlsx"):
         c.font = INPUT_FONT if isinstance(val, (int, float)) else LINK_FONT
         row += 1
 
-    ws["A14"] = ("Full breakdown on the “All Verdicts” tab. This is the same analysis engine as "
-                 "the local dashboard — not a lighter scrape — because GitHub Actions can reach "
-                 "yfinance directly.")
-    ws["A14"].font = Font(name=FONT, size=9, italic=True, color="6B675F")
-    ws["A14"].alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells("A14:D14")
-    ws.row_dimensions[14].height = 32
+    note_row = row + 1
+    ws.cell(row=note_row, column=1,
+            value=("Full technical + fundamental breakdown on 'All Verdicts'; multi-year "
+                   "revenue/earnings detail on '5Y Fundamentals'. Same analysis engine as "
+                   "the local dashboard — not a lighter scrape — because GitHub Actions can "
+                   "reach yfinance directly."))
+    ws.cell(row=note_row, column=1).font = Font(name=FONT, size=9, italic=True, color="6B675F")
+    ws.cell(row=note_row, column=1).alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=4)
+    ws.row_dimensions[note_row].height = 32
 
-    ws["A16"] = "Legend:"
-    ws["A16"].font = Font(name=FONT, size=9, bold=True)
-    ws["A17"] = "Blue = pipeline output (this report's input)"
-    ws["A17"].font = INPUT_FONT
-    ws["A18"] = "Black / green = formula (recalculates; green links to another sheet)"
-    ws["A18"].font = LINK_FONT
-    ws["A19"] = "Yellow fill = edit this to change the BUY threshold used by the Fired column"
-    ws["A19"].font = Font(name=FONT, size=9, italic=True, color="6B675F")
+    legend_row = note_row + 2
+    ws.cell(row=legend_row, column=1, value="Legend:").font = Font(name=FONT, size=9, bold=True)
+    ws.cell(row=legend_row + 1, column=1, value="Blue = pipeline output (this report's input)").font = INPUT_FONT
+    ws.cell(row=legend_row + 2, column=1,
+            value="Black / green = formula (recalculates; green links to another sheet)").font = LINK_FONT
+    ws.cell(row=legend_row + 3, column=1, value="Gray “—” = not available for this stock/period").font = NA_FONT
+    ws.cell(row=legend_row + 4, column=1,
+            value="Yellow fill = edit this to change the BUY threshold used by the Fired column").font = Font(
+        name=FONT, size=9, italic=True, color="6B675F")
 
     # -----------------------------------------------------------------
     # Sheet 2: All Verdicts
@@ -116,10 +171,12 @@ def build(result, output_path="daily_digest.xlsx"):
         c.fill = HEADER_FILL
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = BORDER
-    ws2.row_dimensions[1].height = 30
+    ws2.row_dimensions[1].height = 34
     ws2.freeze_panes = "A2"
 
-    widths = [12, 20, 12, 10, 11, 9, 12, 12, 26, 34, 13, 8]
+    widths = [12, 20, 12, 10, 11, 9, 12, 12, 26, 34, 13, 8,
+              10, 13, 15, 10,
+              13, 9, 15, 12, 16, 18, 11]
     for i, w in enumerate(widths, 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
@@ -156,18 +213,60 @@ def build(result, output_path="daily_digest.xlsx"):
         fc.font = LINK_FONT
         fc.alignment = Alignment(horizontal="center")
 
-        # helper column M (BUY-only confidence) drives the Summary "Top pick" lookup
-        mc = ws2.cell(row=i, column=13, value=f'=IF(D{i}="BUY",E{i},"")')
-        mc.font = FORMULA_FONT
+        # --- technical analysis columns (13-16) -----------------------------
+        val, font = _blank_or(v.get("rsi14"), INPUT_FONT)
+        ws2.cell(row=i, column=13, value=val).font = font
 
-        for col in range(1, 14):
+        macd = v.get("macd_bullish")
+        macd_label = "Bullish" if macd is True else ("Bearish" if macd is False else "—")
+        ws2.cell(row=i, column=14, value=macd_label).font = INPUT_FONT if macd is not None else NA_FONT
+
+        cross = v.get("sma_cross")
+        cross_label = {"golden": "Golden", "death": "Death", "flat": "Flat"}.get(cross, "—")
+        ws2.cell(row=i, column=15, value=cross_label).font = INPUT_FONT if cross else NA_FONT
+
+        val, font = _blank_or(v.get("adx14"), INPUT_FONT)
+        ws2.cell(row=i, column=16, value=val).font = font
+
+        # --- fundamental analysis columns (17-23) ---------------------------
+        val, font = _blank_or(v.get("pe_trailing"), INPUT_FONT)
+        ws2.cell(row=i, column=17, value=val).font = font
+
+        val, font = _blank_or(v.get("roe_pct"), INPUT_FONT)
+        ws2.cell(row=i, column=18, value=val).font = font
+
+        val, font = _blank_or(v.get("revenue_growth_yoy_pct"), INPUT_FONT)
+        ws2.cell(row=i, column=19, value=val).font = font
+
+        val, font = _blank_or(v.get("debt_to_equity"), INPUT_FONT)
+        ws2.cell(row=i, column=20, value=val).font = font
+
+        val, font = _blank_or(v.get("revenue_cagr_pct"), INPUT_FONT)
+        ws2.cell(row=i, column=21, value=val).font = font
+
+        val, font = _blank_or(v.get("net_income_cagr_pct"), INPUT_FONT)
+        ws2.cell(row=i, column=22, value=val).font = font
+
+        val, font = _blank_or(v.get("fundamentals_years"), INPUT_FONT)
+        ws2.cell(row=i, column=23, value=val).font = font
+
+        for col in range(1, len(VERDICT_HEADERS) + 1):
             ws2.cell(row=i, column=col).border = BORDER
 
-    ws2.cell(row=1, column=13, value="BUY Confidence (helper)").font = HEADER_FONT
-    ws2.cell(row=1, column=13).fill = HEADER_FILL
-    ws2.column_dimensions["M"].width = 20
+    # helper column M (BUY-only confidence) — kept at column 13 to match the
+    # Summary tab's existing formulas ('All Verdicts'!M2:M...), so it's
+    # written into its own dedicated column *after* the visible table rather
+    # than shifting every downstream reference.
+    helper_col = len(VERDICT_HEADERS) + 1
+    helper_letter = get_column_letter(helper_col)
+    ws2.cell(row=1, column=helper_col, value="BUY Confidence (helper)").font = HEADER_FONT
+    ws2.cell(row=1, column=helper_col).fill = HEADER_FILL
+    ws2.column_dimensions[helper_letter].width = 20
+    for i in range(2, last_row + 1):
+        mc = ws2.cell(row=i, column=helper_col, value=f'=IF(D{i}="BUY",E{i},"")')
+        mc.font = FORMULA_FONT
 
-    ws2.auto_filter.ref = f"A1:M{last_row}"
+    ws2.auto_filter.ref = f"A1:{helper_letter}{last_row}"
 
     # conditional formatting
     green = PatternFill("solid", fgColor="E8F4EE")
@@ -183,6 +282,108 @@ def build(result, output_path="daily_digest.xlsx"):
     ws2.conditional_formatting.add(f"H2:H{last_row}", FormulaRule(formula=["H2<0"], fill=red))
     ws2.conditional_formatting.add(f"L2:L{last_row}",
         CellIsRule(operator="equal", formula=['"YES"'], fill=green))
+    ws2.conditional_formatting.add(f"N2:N{last_row}",
+        CellIsRule(operator="equal", formula=['"Bullish"'], fill=green))
+    ws2.conditional_formatting.add(f"N2:N{last_row}",
+        CellIsRule(operator="equal", formula=['"Bearish"'], fill=red))
+    ws2.conditional_formatting.add(f"O2:O{last_row}",
+        CellIsRule(operator="equal", formula=['"Golden"'], fill=green))
+    ws2.conditional_formatting.add(f"O2:O{last_row}",
+        CellIsRule(operator="equal", formula=['"Death"'], fill=red))
+
+    # -----------------------------------------------------------------
+    # Sheet 3: 5Y Fundamentals
+    # -----------------------------------------------------------------
+    ws3 = wb.create_sheet("5Y Fundamentals")
+    for col, h in enumerate(FUND5Y_HEADERS, 1):
+        c = ws3.cell(row=1, column=col, value=h)
+        c.font = HEADER_FONT
+        c.fill = HEADER_FILL
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = BORDER
+    ws3.row_dimensions[1].height = 34
+    ws3.freeze_panes = "A2"
+
+    f5y_widths = [12, 20, 22, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 14, 16, 20, 16]
+    for i, w in enumerate(f5y_widths, 1):
+        ws3.column_dimensions[get_column_letter(i)].width = w
+
+    ws3.cell(row=1, column=1)  # anchor before note
+    note = ws3.cell(row=1, column=1)
+    if fundamentals_5y:
+        last3 = len(fundamentals_5y) + 1
+        for i, s in enumerate(fundamentals_5y, start=2):
+            years = s.get("years", []) or []           # chronological, oldest first
+            rev_by_year = s.get("revenue_by_year", {}) or {}
+            ni_by_year = s.get("net_income_by_year", {}) or {}
+            n = min(len(years), 5)
+
+            ws3.cell(row=i, column=1, value=s["symbol"]).font = Font(name=FONT, size=10, bold=True)
+            ws3.cell(row=i, column=2, value=s.get("name", s["symbol"])).font = INPUT_FONT
+            ws3.cell(row=i, column=3, value=", ".join(years) if years else "—").font = INPUT_FONT
+
+            # right-align into the 5-year block: most recent always lands in
+            # the rightmost column (col 8 for revenue, col 13 for net income)
+            # so a stock with only 4 years of Yahoo data leaves Y-4 blank
+            # instead of misaligning every stock's earliest year together.
+            rev_start_col = 4 + (5 - n)
+            ni_start_col = 9 + (5 - n)
+            for j, y in enumerate(years[-5:]):
+                rv = rev_by_year.get(y)
+                c = ws3.cell(row=i, column=rev_start_col + j, value=rv if rv is not None else "—")
+                c.font = INPUT_FONT if rv is not None else NA_FONT
+                c.number_format = "#,##0"
+                nv = ni_by_year.get(y)
+                c2 = ws3.cell(row=i, column=ni_start_col + j, value=nv if nv is not None else "—")
+                c2.font = INPUT_FONT if nv is not None else NA_FONT
+                c2.number_format = "#,##0"
+
+            rev_range = f"D{i}:H{i}"
+            ni_range = f"I{i}:M{i}"
+            # CAGR as a real formula off the displayed year cells: oldest
+            # populated cell is found via INDEX/COUNT (right-aligned layout
+            # means "oldest" is always (6 - count) cells in from the left),
+            # newest is always the rightmost cell of the block.
+            rev_cagr = (f'=IFERROR(IF(COUNT({rev_range})>=2,'
+                        f'(H{i}/INDEX({rev_range},6-COUNT({rev_range})))^'
+                        f'(1/(COUNT({rev_range})-1))-1,"—"),"—")')
+            ni_cagr = (f'=IFERROR(IF(COUNT({ni_range})>=2,'
+                       f'(M{i}/INDEX({ni_range},6-COUNT({ni_range})))^'
+                       f'(1/(COUNT({ni_range})-1))-1,"—"),"—")')
+            margin_latest = f'=IFERROR(M{i}/H{i},"—")'
+
+            c = ws3.cell(row=i, column=14, value=rev_cagr)
+            c.font = FORMULA_FONT
+            c.number_format = "0.0%"
+            c = ws3.cell(row=i, column=15, value=ni_cagr)
+            c.font = FORMULA_FONT
+            c.number_format = "0.0%"
+            c = ws3.cell(row=i, column=16, value=margin_latest)
+            c.font = FORMULA_FONT
+            c.number_format = "0.0%"
+
+            yc = ws3.cell(row=i, column=17, value=f"=COUNT({rev_range})")
+            yc.font = FORMULA_FONT
+
+            for col in range(1, len(FUND5Y_HEADERS) + 1):
+                ws3.cell(row=i, column=col).border = BORDER
+
+        ws3.auto_filter.ref = f"A1:Q{last3}"
+        note_row3 = last3 + 2
+    else:
+        note_row3 = 3
+
+    note = ws3.cell(row=note_row3, column=1,
+        value=("Revenue and Net Income figures are as reported in each company's annual "
+               "financial statements (source: yfinance / Yahoo Finance). Yahoo's free feed "
+               "typically exposes up to ~4 years of annual statements, not a full 5 — where a "
+               "stock shows fewer than 5 populated year columns, that is a genuine data "
+               "availability limit, not an omission. CAGR and latest-year net margin are live "
+               "formulas computed from the year columns in this sheet."))
+    note.font = Font(name=FONT, size=9, italic=True, color="6B675F")
+    note.alignment = Alignment(wrap_text=True, vertical="top")
+    ws3.merge_cells(start_row=note_row3, start_column=1, end_row=note_row3, end_column=8)
+    ws3.row_dimensions[note_row3].height = 48
 
     wb.save(output_path)
     return output_path
