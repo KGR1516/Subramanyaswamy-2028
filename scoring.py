@@ -16,10 +16,13 @@ Signal sources per agent (all optional — missing data just means that
 signal contributes nothing, never a guess):
   Technical  (technicals.*):  RVOL, price-vs-SMA20, day-range position,
              RSI-14, MACD, Bollinger %B, SMA50/200 golden/death cross,
-             ADX-14 (trend strength).
+             ADX-14 (trend strength), volume breakout (fresh N-day high
+             on 1.5x+ average volume).
   Fundamental (analyst.*, fundamentals.*, fundamentals_5y.*): analyst
              target upside/consensus, P/E, PEG, ROE, revenue growth (YoY
-             and 5y CAGR), debt/equity, current ratio.
+             and 5y CAGR), debt/equity, current ratio, free cash flow
+             (+ FCF yield), operating cash flow, net cash flow, EBIT,
+             EBITDA, cash conversion cycle (days), net profit 5y CAGR.
   News       (news.*): headline keyword tone.
 
 Bull and Bear each read across ALL of the above — they're what actually
@@ -43,6 +46,14 @@ def _g(evidence, path, default=None):
 
 def _clamp(x, lo, hi):
     return max(lo, min(hi, x))
+
+
+def _usd(x):
+    """Format a dollar figure with correct sign placement: -$200,000, not $-200,000."""
+    if x is None:
+        return "n/a"
+    sign = "-" if x < 0 else ""
+    return f"{sign}${abs(x):,.0f}"
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +107,9 @@ def _score_bull(ev):
     if _g(ev, "technicals.obv_trend") == "rising":
         score += 5
         reasons.append("OBV rising — volume confirms the move")
+    if _g(ev, "technicals.volume_breakout") is True:
+        score += 12
+        reasons.append("Volume breakout — fresh 20d high on 1.5x+ average volume")
 
     # -- fundamental: analyst target ---------------------------------------
     up = _g(ev, "analyst.upside_pct")
@@ -128,6 +142,40 @@ def _score_bull(ev):
     if rev_cagr is not None and rev_cagr >= 12:
         score += 8
         reasons.append(f"Revenue CAGR {rev_cagr}% over {_g(ev, 'fundamentals_5y.years_available')}y")
+    ni_cagr = _g(ev, "fundamentals_5y.net_income_cagr_pct")
+    if ni_cagr is not None and ni_cagr >= 12:
+        score += 6
+        reasons.append(f"Net profit CAGR {ni_cagr}% over {_g(ev, 'fundamentals_5y.years_available')}y")
+
+    # -- fundamental: cash flow / operating profitability -------------------
+    fcf = _g(ev, "fundamentals.free_cash_flow")
+    if fcf is not None and fcf > 0:
+        score += 6
+        reasons.append(f"Positive free cash flow ({_usd(fcf)})")
+    fcf_yield = _g(ev, "fundamentals.fcf_yield_pct")
+    if fcf_yield is not None and fcf_yield >= 4:
+        score += 5
+        reasons.append(f"FCF yield {fcf_yield}% — cash-generative vs market cap")
+    ocf = _g(ev, "fundamentals.operating_cash_flow")
+    if ocf is not None and ocf > 0:
+        score += 5
+        reasons.append(f"Positive operating cash flow ({_usd(ocf)})")
+    ncf = _g(ev, "fundamentals.net_cash_flow")
+    if ncf is not None and ncf > 0:
+        score += 3
+        reasons.append(f"Net cash flow positive ({_usd(ncf)})")
+    ccc = _g(ev, "fundamentals.cash_conversion_cycle_days")
+    if ccc is not None and ccc <= 45:
+        score += 5
+        reasons.append(f"Efficient cash conversion cycle ({ccc} days)")
+    ebitda = _g(ev, "fundamentals.ebitda")
+    if ebitda is not None and ebitda > 0:
+        score += 3
+        reasons.append(f"EBITDA positive ({_usd(ebitda)}) — operating profitability")
+    ebit = _g(ev, "fundamentals.ebit")
+    if ebit is not None and ebit > 0:
+        score += 3
+        reasons.append(f"EBIT positive ({_usd(ebit)})")
 
     # -- news -----------------------------------------------------------------
     if (_g(ev, "news.positive", 0) or 0) > (_g(ev, "news.negative", 0) or 0):
@@ -218,6 +266,10 @@ def _score_bear(ev):
     if rev_cagr is not None and rev_cagr < 0:
         score += 8
         reasons.append(f"Revenue CAGR {rev_cagr}% over {_g(ev, 'fundamentals_5y.years_available')}y — declining business")
+    ni_cagr = _g(ev, "fundamentals_5y.net_income_cagr_pct")
+    if ni_cagr is not None and ni_cagr < 0:
+        score += 6
+        reasons.append(f"Net profit CAGR {ni_cagr}% over {_g(ev, 'fundamentals_5y.years_available')}y — shrinking profits")
     d2e = _g(ev, "fundamentals.debt_to_equity")
     if d2e is not None and d2e > 200:
         score += 6
@@ -226,6 +278,32 @@ def _score_bear(ev):
     if cr is not None and cr < 1:
         score += 5
         reasons.append(f"Current ratio {cr} — liquidity risk")
+
+    # -- fundamental: cash flow / operating profitability -------------------
+    fcf = _g(ev, "fundamentals.free_cash_flow")
+    if fcf is not None and fcf < 0:
+        score += 8
+        reasons.append(f"Negative free cash flow ({_usd(fcf)}) — burning cash")
+    ocf = _g(ev, "fundamentals.operating_cash_flow")
+    if ocf is not None and ocf < 0:
+        score += 8
+        reasons.append(f"Negative operating cash flow ({_usd(ocf)}) — core operations burning cash")
+    ncf = _g(ev, "fundamentals.net_cash_flow")
+    if ncf is not None and ncf < 0:
+        score += 3
+        reasons.append(f"Net cash flow negative ({_usd(ncf)})")
+    ccc = _g(ev, "fundamentals.cash_conversion_cycle_days")
+    if ccc is not None and ccc > 90:
+        score += 5
+        reasons.append(f"Bloated cash conversion cycle ({ccc} days) — cash tied up in working capital")
+    ebitda = _g(ev, "fundamentals.ebitda")
+    if ebitda is not None and ebitda <= 0:
+        score += 6
+        reasons.append(f"Negative EBITDA ({_usd(ebitda)}) — burning cash at the operating level")
+    ebit = _g(ev, "fundamentals.ebit")
+    if ebit is not None and ebit <= 0:
+        score += 6
+        reasons.append(f"Operating loss (EBIT {_usd(ebit)})")
 
     # -- news -----------------------------------------------------------------
     if (_g(ev, "news.negative", 0) or 0) > (_g(ev, "news.positive", 0) or 0):
@@ -279,6 +357,12 @@ def _score_technician(ev):
             reasons.append(f"ADX {adx} — trending")
         else:
             reasons.append(f"ADX {adx} — range-bound")
+
+    vb = _g(ev, "technicals.volume_breakout")
+    if vb is True:
+        score += 10; reasons.append("Volume breakout confirmed (20d high + 1.5x+ volume)")
+    elif vb is False:
+        reasons.append("No volume breakout")
 
     return _clamp(score, 0, 100), reasons or ["Insufficient technical data"]
 
@@ -355,6 +439,57 @@ def _score_fundamentalist(ev):
             score += 5; reasons.append(f"Current ratio {cr} — healthy liquidity")
         elif cr < 1:
             score -= 5; reasons.append(f"Current ratio {cr} — liquidity risk")
+
+    ni_cagr = _g(ev, "fundamentals_5y.net_income_cagr_pct")
+    if ni_cagr is not None:
+        any_data = True
+        score += _clamp(int(ni_cagr), -10, 10)
+        reasons.append(f"Net profit CAGR {ni_cagr}% ({years}y)")
+
+    fcf = _g(ev, "fundamentals.free_cash_flow")
+    if fcf is not None:
+        any_data = True
+        if fcf > 0:
+            score += 6; reasons.append(f"Free cash flow positive ({_usd(fcf)})")
+        else:
+            score -= 6; reasons.append(f"Free cash flow negative ({_usd(fcf)})")
+
+    fcf_yield = _g(ev, "fundamentals.fcf_yield_pct")
+    if fcf_yield is not None:
+        any_data = True
+        if fcf_yield >= 4:
+            score += 4; reasons.append(f"FCF yield {fcf_yield}%")
+
+    ocf = _g(ev, "fundamentals.operating_cash_flow")
+    if ocf is not None:
+        any_data = True
+        if ocf > 0:
+            score += 4; reasons.append(f"Operating cash flow positive ({_usd(ocf)})")
+        else:
+            score -= 4; reasons.append(f"Operating cash flow negative ({_usd(ocf)})")
+
+    ncf = _g(ev, "fundamentals.net_cash_flow")
+    if ncf is not None:
+        any_data = True
+        reasons.append(f"Net cash flow {'positive' if ncf >= 0 else 'negative'} ({_usd(ncf)})")
+
+    ccc = _g(ev, "fundamentals.cash_conversion_cycle_days")
+    if ccc is not None:
+        any_data = True
+        if ccc <= 45:
+            score += 4; reasons.append(f"Efficient cash conversion cycle ({ccc} days)")
+        elif ccc > 90:
+            score -= 4; reasons.append(f"Bloated cash conversion cycle ({ccc} days)")
+
+    ebitda = _g(ev, "fundamentals.ebitda")
+    if ebitda is not None:
+        any_data = True
+        reasons.append(f"EBITDA {_usd(ebitda)}")
+
+    ebit = _g(ev, "fundamentals.ebit")
+    if ebit is not None:
+        any_data = True
+        reasons.append(f"EBIT {_usd(ebit)}")
 
     if not any_data:
         return 45, ["Analyst and fundamentals data unavailable"]
