@@ -58,10 +58,13 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
     ts = data_sources.timestamp_ist()
     print(f"[run_daily] scanned={scanned} shortlisted={shortlisted} bundles={len(bundles)}")
 
-    verdicts, fired = [], []
+    verdicts, fired, fundamentals_5y = [], [], []
     for ev in bundles:
         result = llm.evaluate(ev, engine=engine)
         vd = result["verdict"]
+        tech = ev.get("technicals", {}) or {}
+        fund = ev.get("fundamentals", {}) or {}
+        f5y = ev.get("fundamentals_5y", {}) or {}
         row = {
             "ts": datetime.now().strftime("%H:%M:%S"),
             "symbol": ev["symbol"],
@@ -76,11 +79,36 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
             "day_change_pct": ev["price"].get("day_change_pct"),
             "engine": result.get("engine", engine),
             "fired": False,
+            # technical analysis (RSI/MACD/SMA50-200 cross/ADX) — see data_sources.py
+            "rsi14": tech.get("rsi14"),
+            "macd_bullish": tech.get("macd_bullish"),
+            "sma_cross": tech.get("sma_cross"),
+            "adx14": tech.get("adx14"),
+            # fundamental analysis snapshot
+            "pe_trailing": fund.get("pe_trailing"),
+            "roe_pct": fund.get("roe_pct"),
+            "revenue_growth_yoy_pct": fund.get("revenue_growth_yoy_pct"),
+            "debt_to_equity": fund.get("debt_to_equity"),
+            # fundamental analysis — multi-year trend
+            "revenue_cagr_pct": f5y.get("revenue_cagr_pct"),
+            "net_income_cagr_pct": f5y.get("net_income_cagr_pct"),
+            "fundamentals_years": f5y.get("years_available"),
         }
         row["fired"] = row["verdict"] == "BUY" and row["confidence"] >= confidence_threshold
         if row["fired"]:
             fired.append(row)
         verdicts.append(row)
+        if f5y.get("years_available"):
+            fundamentals_5y.append({
+                "symbol": ev["symbol"],
+                "name": ev.get("name", ev["symbol"]),
+                "years": f5y.get("years", []),
+                "revenue_by_year": f5y.get("revenue_by_year", {}),
+                "net_income_by_year": f5y.get("net_income_by_year", {}),
+                "revenue_cagr_pct": f5y.get("revenue_cagr_pct"),
+                "net_income_cagr_pct": f5y.get("net_income_cagr_pct"),
+                "avg_net_margin_pct": f5y.get("avg_net_margin_pct"),
+            })
         print(f"  {ev['symbol']:<14} {vd['verdict']:<6} conf={vd['confidence']}  "
               f"{'(FIRED)' if row['fired'] else ''}")
 
@@ -94,6 +122,7 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
         "buy_signals": len(fired),
         "verdicts": verdicts,
         "fired": fired,
+        "fundamentals_5y": fundamentals_5y,
     }
 
 
