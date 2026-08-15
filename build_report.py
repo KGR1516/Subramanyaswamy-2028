@@ -11,10 +11,14 @@ the threshold cell), not a hardcoded flag, so it recalculates if you change
 the threshold on the Summary tab.
 
 Sheet 2 ("All Verdicts") carries both the original verdict columns and the
-new technical-analysis columns (RSI-14, MACD signal, SMA50/200 cross,
-ADX-14) and fundamental-analysis columns (P/E, ROE, revenue growth,
-debt/equity, 5-year revenue & net-income CAGR) — see data_sources.py /
-scoring.py for what feeds them.
+technical-analysis columns (RSI-14, MACD signal, SMA50/200 cross, ADX-14,
+Volume Breakout) and fundamental-analysis columns (P/E, ROE, revenue
+growth, debt/equity, 5-year revenue & net-income CAGR, Free/Operating/Net
+Cash Flow, EBIT, EBITDA, Cash Conversion Cycle) — see data_sources.py /
+scoring.py for what feeds them. New columns are always appended at the end
+of VERDICT_HEADERS, never inserted in the middle — several Summary-tab and
+conditional-formatting formulas hardcode column letters (L/N/O/Q/R) that
+would silently break if earlier columns shifted.
 
 Sheet 3 ("5Y Fundamentals") is the multi-year detail behind those CAGR
 columns: revenue and net income for every year actually available (Yahoo's
@@ -54,6 +58,11 @@ VERDICT_HEADERS = [
     # --- fundamental analysis ------------------------------------------------
     "P/E (Trailing)", "ROE %", "Revenue Gr. YoY %", "Debt/Equity",
     "Revenue CAGR (5Y) %", "Net Income CAGR (5Y) %", "Fund. Years",
+    # --- volume breakout + cash flow (appended, not inserted, so the
+    # hardcoded Summary-tab / conditional-formatting column letters above
+    # — L/N/O/Q/R — never shift) ----------------------------------------
+    "Volume Breakout", "Free Cash Flow", "FCF Yield %",
+    "Operating Cash Flow", "Net Cash Flow", "EBIT", "EBITDA", "CCC (Days)",
 ]
 
 FUND5Y_HEADERS = [
@@ -176,7 +185,8 @@ def build(result, output_path="daily_digest.xlsx"):
 
     widths = [12, 20, 12, 10, 11, 9, 12, 12, 26, 34, 13, 8,
               10, 13, 15, 10,
-              13, 9, 15, 12, 16, 18, 11]
+              13, 9, 15, 12, 16, 18, 11,
+              14, 15, 11, 16, 14, 14, 14, 12]
     for i, w in enumerate(widths, 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
@@ -250,6 +260,47 @@ def build(result, output_path="daily_digest.xlsx"):
         val, font = _blank_or(v.get("fundamentals_years"), INPUT_FONT)
         ws2.cell(row=i, column=23, value=val).font = font
 
+        # --- volume breakout + cash flow columns (24-31) ---------------------
+        vb = v.get("volume_breakout")
+        vb_label = "Yes" if vb is True else ("No" if vb is False else "—")
+        ws2.cell(row=i, column=24, value=vb_label).font = INPUT_FONT if vb is not None else NA_FONT
+
+        val, font = _blank_or(v.get("free_cash_flow"), INPUT_FONT)
+        fcf_c = ws2.cell(row=i, column=25, value=val)
+        fcf_c.font = font
+        if val != "—":
+            fcf_c.number_format = "#,##0"
+
+        val, font = _blank_or(v.get("fcf_yield_pct"), INPUT_FONT)
+        ws2.cell(row=i, column=26, value=val).font = font
+
+        val, font = _blank_or(v.get("operating_cash_flow"), INPUT_FONT)
+        ocf_c = ws2.cell(row=i, column=27, value=val)
+        ocf_c.font = font
+        if val != "—":
+            ocf_c.number_format = "#,##0"
+
+        val, font = _blank_or(v.get("net_cash_flow"), INPUT_FONT)
+        ncf_c = ws2.cell(row=i, column=28, value=val)
+        ncf_c.font = font
+        if val != "—":
+            ncf_c.number_format = "#,##0"
+
+        val, font = _blank_or(v.get("ebit"), INPUT_FONT)
+        ebit_c = ws2.cell(row=i, column=29, value=val)
+        ebit_c.font = font
+        if val != "—":
+            ebit_c.number_format = "#,##0"
+
+        val, font = _blank_or(v.get("ebitda"), INPUT_FONT)
+        ebitda_c = ws2.cell(row=i, column=30, value=val)
+        ebitda_c.font = font
+        if val != "—":
+            ebitda_c.number_format = "#,##0"
+
+        val, font = _blank_or(v.get("cash_conversion_cycle_days"), INPUT_FONT)
+        ws2.cell(row=i, column=31, value=val).font = font
+
         for col in range(1, len(VERDICT_HEADERS) + 1):
             ws2.cell(row=i, column=col).border = BORDER
 
@@ -290,6 +341,20 @@ def build(result, output_path="daily_digest.xlsx"):
         CellIsRule(operator="equal", formula=['"Golden"'], fill=green))
     ws2.conditional_formatting.add(f"O2:O{last_row}",
         CellIsRule(operator="equal", formula=['"Death"'], fill=red))
+
+    # volume breakout + cash flow columns (24-31 -> X, Y, Z, AA, AB, AC, AD, AE)
+    vb_letter = get_column_letter(24)
+    fcf_letter = get_column_letter(25)
+    ocf_letter = get_column_letter(27)
+    ncf_letter = get_column_letter(28)
+    ebit_letter = get_column_letter(29)
+    ebitda_letter = get_column_letter(30)
+    ws2.conditional_formatting.add(f"{vb_letter}2:{vb_letter}{last_row}",
+        CellIsRule(operator="equal", formula=['"Yes"'], fill=green))
+    for letter in (fcf_letter, ocf_letter, ncf_letter, ebit_letter, ebitda_letter):
+        rng = f"{letter}2:{letter}{last_row}"
+        ws2.conditional_formatting.add(rng, FormulaRule(formula=[f"{letter}2>0"], fill=green))
+        ws2.conditional_formatting.add(rng, FormulaRule(formula=[f"{letter}2<0"], fill=red))
 
     # -----------------------------------------------------------------
     # Sheet 3: 5Y Fundamentals
