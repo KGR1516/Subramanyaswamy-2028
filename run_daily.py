@@ -84,11 +84,20 @@ def run_cycle(shortlist_per_bucket, confidence_threshold, mode="live"):
             "macd_bullish": tech.get("macd_bullish"),
             "sma_cross": tech.get("sma_cross"),
             "adx14": tech.get("adx14"),
+            "volume_breakout": tech.get("volume_breakout"),
             # fundamental analysis snapshot
             "pe_trailing": fund.get("pe_trailing"),
             "roe_pct": fund.get("roe_pct"),
             "revenue_growth_yoy_pct": fund.get("revenue_growth_yoy_pct"),
             "debt_to_equity": fund.get("debt_to_equity"),
+            # fundamental analysis — cash flow & profitability
+            "free_cash_flow": fund.get("free_cash_flow"),
+            "fcf_yield_pct": fund.get("fcf_yield_pct"),
+            "operating_cash_flow": fund.get("operating_cash_flow"),
+            "net_cash_flow": fund.get("net_cash_flow"),
+            "ebit": fund.get("ebit"),
+            "ebitda": fund.get("ebitda"),
+            "cash_conversion_cycle_days": fund.get("cash_conversion_cycle_days"),
             # fundamental analysis — multi-year trend
             "revenue_cagr_pct": f5y.get("revenue_cagr_pct"),
             "net_income_cagr_pct": f5y.get("net_income_cagr_pct"),
